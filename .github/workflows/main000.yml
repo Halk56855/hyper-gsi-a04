@@ -19,15 +19,12 @@ jobs:
         aria2c -x 16 -s 16 -j 16 -o gsi.zip "https://pixeldrain.com/api/file/seNVkVe7?download"
         7z x gsi.zip
         
-        # Automatically find the extracted .img file regardless of its name or path
+        # البحث التلقائي عن ملف الـ img
         IMG_PATH=$(find . -name "*.img" | head -n 1)
-        
         if [ -z "$IMG_PATH" ]; then
           echo "Error: No .img file found in the archive!"
           exit 1
         fi
-        
-        echo "Found system image at: $IMG_PATH"
         mv "$IMG_PATH" system.img
 
     - name: Prepare MiuiHome APK
@@ -39,7 +36,9 @@ jobs:
     - name: Apply Linux Patch Commands
       run: |
         mkdir -p ~/hyperui_mount
-        sudo mount -o loop system.img ~/hyperui_mount
+        
+        # استخدام mount مباشرة مع تحديد نوع الملفات ext4 لتجنب أي خطأ في القراءة
+        sudo mount -t ext4 -o loop system.img ~/hyperui_mount
         
         # 1. حقن miui-services.jar
         sudo cp miui-services.jar ~/hyperui_mount/system_ext/framework/
