@@ -77,14 +77,12 @@ jobs:
           sudo chown -R $USER:$USER ./clean_root
           
           echo "تم تنظيف وتجهيز الملفات بنجاح."
-          *Verification:* تحقق من ظهور المجلدات وتأكيد إتمام النسخ والحذف دون رسائل خطأ في السجل.
 
       - name: Compress to 7z (Ultra Mode)
         run: |
           echo "جاري الضغط النهائي بصيغة 7z بأقصى إعدادات..."
           7z a -t7z -mx=9 -m0=lzma2 -md=512m -ms=on optimized_cleaned_gsi.7z ./clean_root/*
           ls -lh optimized_cleaned_gsi.7z
-          *Verification:* تأكد من إنشاء الأرشيف النهائي `optimized_cleaned_gsi.7z` وظهور حجمه المضغوط في سجلات التنفيذ.
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
