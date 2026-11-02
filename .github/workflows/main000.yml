@@ -18,7 +18,7 @@ on:
       device_name:
         description: 'كود الجهاز المستهدف (مثال: olive أو a04)'
         required: true
-        default: 'olive'
+        default: 'a04'
 
 jobs:
   build-rom:
@@ -48,7 +48,6 @@ jobs:
 
       - name: Install Python Requirements
         run: |
-          # تثبيت حزمة lz4 وأي متطلبات أخرى موجودة في الأداة
           pip3 install --no-cache-dir lz4
           if [ -f workspace/requirements.txt ]; then
             pip3 install --no-cache-dir -r workspace/requirements.txt
@@ -67,16 +66,15 @@ jobs:
           cd workspace
           python3 make.py input/base.zip input/port.zip ${{ github.event.inputs.device_name }}
 
-      - name: Compress and Split Output Files
+      - name: Collect and Organize Output Files
         run: |
-          cd workspace/output
-          if ls *.zip 1> /dev/null 2>&1; then
-            zip -r -s 1700m Final-Ported-ROM-${{ github.event.inputs.device_name }}.zip ./*
-          fi
+          mkdir -p final_output
+          find workspace -type f \( -name "*.zip" -o -name "*.img" \) -exec cp {} final_output/ \;
+          ls -la final_output/
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ROM-Package-${{ github.event.inputs.device_name }}
-          path: workspace/output/*
+          path: final_output/*
           retention-days: 5
