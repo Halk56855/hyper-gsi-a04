@@ -1,0 +1,33 @@
+name: Compress File to Max Size (Single File)
+
+on:
+  workflow_dispatch: # تشغيل يدوي من واجهة GitHub
+
+jobs:
+  compress-file:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download file from Pixeldrain
+        run: |
+          echo "جاري تحميل الملف..."
+          wget -O target_file "https://pixeldrain.com/api/file/hExUyqg7?download"
+          ls -lh target_file
+
+      - name: Compress to maximum size (Ultra 7z)
+        run: |
+          echo "جاري الضغط بأعلى مستوى ضغط ممكن..."
+          # -mx=9: أعلى مستوى ضغط (Ultra)
+          # -ms=on: تفعيل وضع الأرشيف الصلب (Solid Archive) لزيادة كفاءة الضغط للأحجام الكبيرة
+          # -t7z: استخدام صيغة 7z
+          7z a -t7z -mx=9 -ms=on compressed_archive.7z target_file
+          ls -lh compressed_archive.7z
+
+      - name: Upload compressed archive as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: max-compressed-archive
+          path: compressed_archive.7z
+          max-retention-days: 1
