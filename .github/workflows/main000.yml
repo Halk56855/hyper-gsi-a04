@@ -3,120 +3,62 @@ name: Complete ROM Porting Pipeline with Variants & 7z
 on:
   workflow_dispatch:
     inputs:
-      base_rom_url:
-        description: 'رابط روم الأساس (Base ROM - مثل رابط SourceForge لـ A04)'
+      variant:
+        description: 'ROM Variant'
         required: true
-        default: 'https://excellmedia.dl.sourceforge.net/project/oneui-unleashed/A04/No-GApps%20with%20Samsung%20Bloatware%20Debloated/Odin%20Flashable/V1.1/A04%20Clean%20Debloat.zip?viasf=1&fid=449d933957aaac48&e=1793684837&st=kOvzWAs44Lo48qpfb_eYag'
-      port_rom_url:
-        description: 'رابط روم البورت (Port ROM - مثل HyperOS 4)'
-        required: true
-        default: 'https://github.com/micronixxx/Redmi-8-Ports/releases/download/HyperOS-4/HyperOS-4-CN-olive-20261021-Micronix-00'
-      mysticgsi_repo:
-        description: 'رابط مستودع أداة MysticGSI'
-        required: true
-        default: 'https://github.com/MysticGSI/mysticgsi.git'
-      device_name:
-        description: 'كود الجهاز المستهدف'
-        required: true
-        default: 'a04'
-      build_variant:
-        type: choice
-        description: 'اختر نوع النسخة المطلوب بناؤها:'
-        required: true
-        default: 'lite'
-        options:
-          - 'standard'     # النسخة العادية
-          - 'lite'         # نسخة مخففة
-          - 'ultra_lite'   # نسخة مخففة جداً
+        default: 'ultra_lite'
+        type: string
 
 jobs:
   build-rom:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+    - name: Checkout Repository
+      uses: actions/checkout@v4
 
-      - name: Free Up Disk Space
-        run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /usr/local/lib/android
-          df -h
+    - name: Free Disk Space
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: true
+        android: true
+        dotnet: true
+        haskell: true
+        large-packages: true
+        docker-images: true
+        swap-storage: true
 
-      - name: Install System Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y git wget curl python3 python3-pip aria2 zip unzip p7zip-full p7zip-rar tar android-sdk-libsparse-utils
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          p7zip-full aria2 python3 git wget curl bc rsync \
+          build-essential zip unzip libssl-dev
 
-      - name: Clone MysticGSI Tool Repository
-        run: |
-          git clone ${{ github.event.inputs.mysticgsi_repo }} workspace
-          cd workspace
-          mkdir -p input output
+    # ضع هنا خطوات بناء أو تعديل الروم الخاصة بك (توليد ملفات النظام/الصور)
+    - name: Build / Port ROM
+      run: |
+        echo "[-] Starting ROM porting process..."
+        mkdir -p out
+        # (استبدل هذا السطر بأوامر بناء أو تجميع الروم الفعلية الخاصة بك)
+        # مثال وهمي لتوليد ملف كبير للتجربة:
+        # dd if=/dev/zero of=out/system.img bs=1M count=5300
 
-      - name: Install Python Requirements
-        run: |
-          pip3 install --no-cache-dir lz4
-          if [ -f workspace/requirements.txt ]; then
-            pip3 install --no-cache-dir -r workspace/requirements.txt
-          fi
+    - name: Compress and Split ROM into 1GB parts
+      run: |
+        echo "[-] Starting maximum compression (-mx=9) and splitting into 1GB parts (-v1g)..."
+        
+        # انتقل للمجلد الذي يوجد به ملف الروم الناتج (عدل المسار حسب مشروعك)
+        cd out
+        
+        # أمر 7z للضغط بأقصى قوة (-mx=9) والتقسيم إلى أجزاء 1GB (-v1g)
+        # سيتم إنتاج ملفات مثل: ROM-a04-ultra_lite.7z.001, ROM-a04-ultra_lite.7z.002, ...
+        7z a -t7z -mx=9 -v1g ROM-a04-ultra_lite.7z system.img
 
-      - name: Download ROMs via Aria2
-        run: |
-          cd workspace
-          echo "جاري تحميل روم الأساس..."
-          aria2c -s 16 -x 16 "${{ github.event.inputs.base_rom_url }}" -o input/base.zip
-          echo "جاري تحميل روم البورت..."
-          aria2c -s 16 -x 16 "${{ github.event.inputs.port_rom_url }}" -o input/port.zip
-
-      - name: Run Porting Script Execution
-        run: |
-          cd workspace
-          python3 make.py input/base.zip input/port.zip ${{ github.event.inputs.device_name }}
-
-      - name: Apply Debloat Variant (تطبيق التخفيف حسب الاختيار)
-        run: |
-          cd workspace
-          VARIANT="${{ github.event.inputs.build_variant }}"
-          echo "جاري تطبيق خيار النسخة: $VARIANT"
-          
-          SYS_DIR=$(find . -type d -name "system" | head -n 1)
-          if [ -n "$SYS_DIR" ]; then
-            if [ "$VARIANT" = "lite" ]; then
-              echo "تطبيق النسخة المخففة (Lite)..."
-              rm -rf "$SYS_DIR/priv-app/YouTube" "$SYS_DIR/app/Chrome" "$SYS_DIR/app/Gmail2" 2>/dev/null || true
-            elif [ "$VARIANT" = "ultra_lite" ]; then
-              echo "تطبيق النسخة المخففة جداً (Ultra Lite)..."
-              rm -rf "$SYS_DIR/priv-app/*Google*" "$SYS_DIR/app/*Google*" "$SYS_DIR/product/app/*" 2>/dev/null || true
-            else
-              echo "النسخة العادية (Standard) - بدون تعديلات حذف."
-            fi
-          else
-            echo "لم يتم العثور على مجلد system مباشرة، تخطي التخفيف."
-          fi
-
-      - name: Compress Output to 7z (Maximum Compression)
-        run: |
-          mkdir -p final_output
-          cd workspace
-          
-          # تحديد مجلد النواتج
-          if [ -d "output" ] && [ "$(ls -A output)" ]; then
-            TARGET="output/*"
-          else
-            TARGET="."
-          fi
-          
-          echo "جاري الضغط بصيغة 7z بأقصى درجة ضغط (-mx=9) للحصول على أصغر حجم ممكن..."
-          7z a -t7z -mx=9 -ms=on ../final_output/ROM-${{ github.event.inputs.device_name }}-${{ github.event.inputs.build_variant }}.7z $TARGET
-          
-          cd ../final_output
-          ls -lh
-
-      - name: Upload Build Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ROM-${{ github.event.inputs.device_name }}-${{ github.event.inputs.build_variant }}
-          path: final_output/*
-          retention-days: 5
+    - name: Upload Split ROM Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ROM-a04-ultra_lite-parts
+        path: |
+          out/ROM-a04-ultra_lite.7z.*
+        compression-level: 0
