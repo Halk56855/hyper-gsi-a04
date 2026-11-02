@@ -18,7 +18,7 @@ on:
       device_name:
         description: 'كود الجهاز المستهدف (مثال: olive أو a04)'
         required: true
-        default: 'a04'
+        default: 'olive'
 
 jobs:
   build-rom:
@@ -45,6 +45,14 @@ jobs:
           git clone ${{ github.event.inputs.mysticgsi_repo }} workspace
           cd workspace
           mkdir -p input output
+
+      - name: Install Python Requirements
+        run: |
+          # تثبيت حزمة lz4 وأي متطلبات أخرى موجودة في الأداة
+          pip3 install --no-cache-dir lz4
+          if [ -f workspace/requirements.txt ]; then
+            pip3 install --no-cache-dir -r workspace/requirements.txt
+          fi
 
       - name: Download ROMs via Aria2
         run: |
