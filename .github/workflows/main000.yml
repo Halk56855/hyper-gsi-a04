@@ -95,16 +95,22 @@ jobs:
       - name: Compress and Split 7z into Maximum Ultra Parts (<= 1 GB)
         run: |
           mkdir -p final_output
-          cd workspace
-          
-          # استهداف ملفات النظام الناتجة فقط وتجنب ضغط الملفات المؤقتة
           mkdir -p target_files
-          find . -maxdepth 3 -type f \( -name "*.img" -o -name "*.bin" -o -name "*.zip" \) ! -path "./input/*" -exec cp {} target_files/ \;
           
+          # جمع كافة الصور والملفات الناتجة من كافة المجلدات بدون تحديد عمق معين
+          find workspace -type f \( -name "*.img" -o -name "*.bin" -o -name "*.zip" \) ! -path "*/input/*" -exec cp {} target_files/ \;
+          
+          # في حال عدم وجود ملفات img أو zip، سيتم ضغط مجلد العمل الناتج المتبقي بالكامل
+          if [ -z "$(ls -A target_files)" ]; then
+            echo "لم يتم العثور على ملفات img مستقيمة، جاري ضغط مجلد workspace المخرجات..."
+            cp -r workspace/output/* target_files/ 2>/dev/null || cp -r workspace/* target_files/ 2>/dev/null || true
+            rm -rf target_files/input
+          fi
+
           echo "جاري الضغط بأقصى خوارزمية ضغط LZMA2 وتقسيم الملفات إلى أجزاء بحجم 1000MB (1 GB)..."
-          7z a -t7z -mx=9 -m0=lzma2 -md=64m -v1000m ../final_output/ROM-${{ github.event.inputs.device_name }}-${{ github.event.inputs.build_variant }}.7z ./target_files/*
+          7z a -t7z -mx=9 -m0=lzma2 -md=64m -v1000m final_output/ROM-${{ github.event.inputs.device_name }}-${{ github.event.inputs.build_variant }}.7z ./target_files/*
           
-          cd ../final_output
+          cd final_output
           ls -lh
 
       - name: Upload Build Artifacts
