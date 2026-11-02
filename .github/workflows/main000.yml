@@ -1,66 +1,93 @@
-name: Release HyperOS 4 Patched GSI
+name: Samsung Galaxy A04 HyperOS 4 Port Builder
 
 on:
   workflow_dispatch:
+    inputs:
+      base_rom_url:
+        description: 'رابط تحميل الروم الأساسي (Base ROM - Samsung A04 Stock Firmware / Vendor)'
+        required: true
+        default: 'https://excellmedia.dl.sourceforge.net/project/oneui-unleashed/A04/No-GApps%20with%20Samsung%20Bloatware%20Debloated/Odin%20Flashable/V1.1/A04%20Clean%20Debloat.zip?viasf=1&fid=449d933957aaac48&e=1793684837&st=kOvzWAs44Lo48qpfb_eYag'
+      port_rom_url:
+        description: 'رابط تحميل روم HyperOS 4 (Port Source)'
+        required: true
+        default: 'https://github.com/micronixxx/Redmi-8-Ports/releases/download/HyperOS-4/HyperOS-4-CN-olive-20261021-Micronix-00'
+      build_variant:
+        type: choice
+        description: 'نوع النسخة المطلوب إنشاؤها:'
+        required: true
+        default: 'lite'
+        options:
+          - 'standard'     # نسخة عادية
+          - 'lite'         # نسخة مخففة
+          - 'ultra_lite'   # نسخة مخففة جداً
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-  
+  build-hyperos-a04:
+    runs-on: ubuntu-22.04
+
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    - name: Download and Extract GSI
-      run: |
-        sudo apt-get update && sudo apt-get install -y aria2 p7zip-full xz-utils
-        aria2c -x 16 -s 16 -j 16 -o gsi.zip "https://pixeldrain.com/api/file/seNVkVe7?download"
-        7z x gsi.zip
-        
-        # البحث التلقائي عن ملف الـ img
-        IMG_PATH=$(find . -name "*.img" | head -n 1)
-        if [ -z "$IMG_PATH" ]; then
-          echo "Error: No .img file found in the archive!"
-          exit 1
-        fi
-        mv "$IMG_PATH" system.img
+      - name: Free Up Disk Space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/lib/android
+          sudo apt-get clean
+          df -h
 
-    - name: Prepare MiuiHome APK
-      run: |
-        if [ -f "MiuiHome.apk.xz" ]; then
-          xz -d -k MiuiHome.apk.xz
-        fi
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git wget curl python3 python3-pip aria2 zip unzip p7zip-full tar android-sdk-libsparse-utils
 
-    - name: Apply Linux Patch Commands
-      run: |
-        mkdir -p ~/hyperui_mount
-        
-        # استخدام mount مباشرة مع تحديد نوع الملفات ext4 لتجنب أي خطأ في القراءة
-        sudo mount -t ext4 -o loop system.img ~/hyperui_mount
-        
-        # 1. حقن miui-services.jar
-        sudo cp miui-services.jar ~/hyperui_mount/system_ext/framework/
-        sudo chmod 644 ~/hyperui_mount/system_ext/framework/miui-services.jar
-        
-        # 2. استبدال وحقن MiuiHome.apk
-        sudo mkdir -p ~/hyperui_mount/product/priv-app/MiuiHome
-        sudo cp MiuiHome.apk ~/hyperui_mount/product/priv-app/MiuiHome/MiuiHome.apk
-        sudo chmod 644 ~/hyperui_mount/product/priv-app/MiuiHome/MiuiHome.apk
-        
-        sync
-        sudo umount ~/hyperui_mount
-        
-        echo "Compressing system.img to HyperOS.7z..."
-        7z a -t7z -mx=9 HyperOS.7z system.img
+      - name: Setup Porting Workspace
+        run: |
+          git clone https://github.com/romashkagene/MysticGSI.git workspace
+          cd workspace
+          mkdir -p input output
 
-    - name: Upload to GitHub Releases
-      uses: softprops/action-gh-release@v2
-      with:
-        files: HyperOS.7z
-        tag_name: hyperos-v4-${{ github.run_number }}
-        name: HyperOS 4 Patched GSI (${{ github.run_number }})
-        body: "HyperOS GSI patched with miui-services.jar and fixed MiuiHome.apk under the name HyperUI 2."
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download Base & HyperOS Port ROMs
+        run: |
+          cd workspace
+          echo "جاري تحميل أساس A04..."
+          aria2c -s 16 -x 16 "${{ github.event.inputs.base_rom_url }}" -o input/base.zip
+          echo "جاري تحميل HyperOS 4 Port..."
+          aria2c -s 16 -x 16 "${{ github.event.inputs.port_rom_url }}" -o input/port.zip
+
+      - name: Execute HyperOS Porting Script
+        run: |
+          cd workspace
+          # تشغيل عملية النقل لبناء نظام HyperOS 4 متوافق مع ملفات A04
+          python3 make.py input/base.zip input/port.zip a04
+
+      - name: Apply Debloat Level (تطبيق التخفيف حسب الاختيار)
+        run: |
+          cd workspace
+          if [ "${{ github.event.inputs.build_variant }}" = "lite" ]; then
+            echo "تطبيق التخفيف العادي على HyperOS..."
+            rm -rf output/system/priv-app/YouTube 2>/dev/null || true
+            rm -rf output/system/app/Gmail2 2>/dev/null || true
+            rm -rf output/system/app/Chrome 2>/dev/null || true
+          elif [ "${{ github.event.inputs.build_variant }}" = "ultra_lite" ]; then
+            echo "تطبيق التخفيف الأقصى (Ultra Lite) على HyperOS..."
+            rm -rf output/system/priv-app/*Google* 2>/dev/null || true
+            rm -rf output/system/app/*Google* 2>/dev/null || true
+            rm -rf output/system/product/app/* 2>/dev/null || true
+          else
+            echo "تخطي الحذف - النسخة العادية (Standard HyperOS)."
+          fi
+
+      - name: Package & Split HyperOS ROM
+        run: |
+          cd workspace/output
+          echo "تحزيم وتقسيم ملفات HyperOS 4 الناتجة..."
+          zip -r -s 1700m HyperOS-4-GalaxyA04-${{ github.event.inputs.build_variant }}.zip ./*
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: HyperOS-4-Samsung-A04-Build
+          path: workspace/output/*.zip*
+          retention-days: 5
