@@ -28,7 +28,7 @@ jobs:
           unzip input_file.zip -d extracted_img/
           ls -lh extracted_img/
 
-      - name: Mount, Remove Bloatware, and Compress Directly
+      - name: Mount, Copy, and Clean Bloatware Safely
         run: |
           IMG_FILE=$(find extracted_img -name "*.img" | head -n 1)
           if [ -z "$IMG_FILE" ]; then
@@ -38,44 +38,53 @@ jobs:
           
           echo "تم العثور على الملف: $IMG_FILE"
           
-          # تحويل الملف من Sparse إلى Raw إذا تطلب الأمر ليتوافق مع الـ mount
+          # تحويل الملف من Sparse إلى Raw إذا تطلب الأمر
           simg2img "$IMG_FILE" "$IMG_FILE.raw" 2>/dev/null && mv "$IMG_FILE.raw" "$IMG_FILE" || true
           
           sudo mkdir -p /mnt/gsi_mount
+          mkdir -p ./clean_root
           
-          echo "جاري ربط ملف الـ IMG بصلاحيات القراءة والكتابة (rw) لتنظيف التطبيقات..."
+          echo "جاري ربط ملف الـ IMG بصلاحيات القراءة والكتابة (rw)..."
           sudo mount -o loop,rw "$IMG_FILE" /mnt/gsi_mount
           
-          echo "تحديد المسار الصحيح للنظام داخل الـ Mount..."
-          SYS_PATH="/mnt/gsi_mount/system"
-          [ -d "/mnt/gsi_mount/system/system" ] && SYS_PATH="/mnt/gsi_mount/system/system"
+          echo "نسخ محتويات النظام إلى مسار محلي لتجاوز قيود الصلاحيات..."
+          sudo cp -a /mnt/gsi_mount/. ./clean_root/
+          
+          # فك ربط الـ IMG فوراً بعد الانتهاء من النسخ
+          sudo umount /mnt/gsi_mount
+          
+          # تحديد مسار النظام بدقة في النسخة المحلية
+          SYS_PATH="./clean_root/system"
+          [ -d "./clean_root/system/system" ] && SYS_PATH="./clean_root/system/system"
           
           echo "مسار النظام المحدد: $SYS_PATH"
           
-          # --- خطوة إزالة التطبيقات الزائدة بأمان ---
-          echo "جاري تنظيف وحذف التطبيقات غير الضرورية..."
+          # --- إزالة تطبيقات سامسونج وجوجل غير الضرورية بأمان لتفادي Bootloop ---
+          echo "جاري تنظيف التطبيقات الزائدة بأمان..."
           
-          # 1. إزالة تطبيقات سامسونج غير الضرورية (مثل Bixby أو ARZone أو SmartThings - اختياري)
-          sudo rm -rf "$SYS_PATH/app/BixbyService" 2>/dev/null || true
-          sudo rm -rf "$SYS_PATH/priv-app/Bixby" 2>/dev/null || true
-          sudo rm -rf "$SYS_PATH/app/ARZone" 2>/dev/null || true
-          sudo rm -rf "$SYS_PATH/app/SmartThings" 2>/dev/null || true
+          # إزالة تطبيقات سامسونج الترفيهية والمساعدات الإضافية فقط (آمن تماماً)
+          rm -rf "$SYS_PATH/app/BixbyService" 2>/dev/null || true
+          rm -rf "$SYS_PATH/priv-app/Bixby" 2>/dev/null || true
+          rm -rf "$SYS_PATH/app/ARZone" 2>/dev/null || true
+          rm -rf "$SYS_PATH/app/SmartThings" 2>/dev/null || true
           
-          # 2. إزالة تطبيقات جوجل الإضافية التي يمكن الاستغناء عنها
-          sudo rm -rf "$SYS_PATH/app/Books" 2>/dev/null || true
-          sudo rm -rf "$SYS_PATH/app/Videos" 2>/dev/null || true
-          sudo rm -rf "$SYS_PATH/app/YouTubeMusic" 2>/dev/null || true
-          sudo rm -rf "$SYS_PATH/product/app/GoogleDuo" 2>/dev/null || true
+          # إزالة تطبيقات جوجل الإضافية غير المرتبطة بخدمات الإقلاع أو المتجر الأساسي
+          rm -rf "$SYS_PATH/app/Books" 2>/dev/null || true
+          rm -rf "$SYS_PATH/app/Videos" 2>/dev/null || true
+          rm -rf "$SYS_PATH/app/YouTubeMusic" 2>/dev/null || true
           
-          echo "تم الانتهاء من إزالة التطبيقات وتخفيف النظام بنجاح."
+          # ضبط ملكية الملفات للمستخدم الحالي لكي يعمل الضغط بسلاسة
+          sudo chown -R $USER:$USER ./clean_root
           
-          echo "جاري ضغط الملفات مباشرة من مسار الـ Mount..."
-          7z a -t7z -mx=9 -m0=lzma2 -md=512m -ms=on optimized_cleaned_gsi.7z /mnt/gsi_mount/*
-          
-          echo "فك الربط (Unmount)..."
-          sudo umount /mnt/gsi_mount
-          
+          echo "تم تنظيف وتجهيز الملفات بنجاح."
+          *Verification:* تحقق من ظهور المجلدات وتأكيد إتمام النسخ والحذف دون رسائل خطأ في السجل.
+
+      - name: Compress to 7z (Ultra Mode)
+        run: |
+          echo "جاري الضغط النهائي بصيغة 7z بأقصى إعدادات..."
+          7z a -t7z -mx=9 -m0=lzma2 -md=512m -ms=on optimized_cleaned_gsi.7z ./clean_root/*
           ls -lh optimized_cleaned_gsi.7z
+          *Verification:* تأكد من إنشاء الأرشيف النهائي `optimized_cleaned_gsi.7z` وظهور حجمه المضغوط في سجلات التنفيذ.
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
