@@ -1,4 +1,4 @@
-name: Complete ROM Porting Pipeline
+name: Complete ROM Porting Pipeline with Variants & 7z
 
 on:
   workflow_dispatch:
@@ -16,9 +16,18 @@ on:
         required: true
         default: 'https://github.com/MysticGSI/mysticgsi.git'
       device_name:
-        description: 'كود الجهاز المستهدف (مثال: olive أو a04)'
+        description: 'كود الجهاز المستهدف'
         required: true
         default: 'a04'
+      build_variant:
+        type: choice
+        description: 'اختر نوع النسخة المطلوب بناؤها:'
+        required: true
+        default: 'lite'
+        options:
+          - 'standard'     # النسخة العادية
+          - 'lite'         # نسخة مخففة
+          - 'ultra_lite'   # نسخة مخففة جداً
 
 jobs:
   build-rom:
@@ -38,7 +47,7 @@ jobs:
       - name: Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git wget curl python3 python3-pip aria2 zip unzip p7zip-full tar android-sdk-libsparse-utils
+          sudo apt-get install -y git wget curl python3 python3-pip aria2 zip unzip p7zip-full p7zip-rar tar android-sdk-libsparse-utils
 
       - name: Clone MysticGSI Tool Repository
         run: |
@@ -66,15 +75,48 @@ jobs:
           cd workspace
           python3 make.py input/base.zip input/port.zip ${{ github.event.inputs.device_name }}
 
-      - name: Collect and Organize Output Files
+      - name: Apply Debloat Variant (تطبيق التخفيف حسب الاختيار)
+        run: |
+          cd workspace
+          VARIANT="${{ github.event.inputs.build_variant }}"
+          echo "جاري تطبيق خيار النسخة: $VARIANT"
+          
+          SYS_DIR=$(find . -type d -name "system" | head -n 1)
+          if [ -n "$SYS_DIR" ]; then
+            if [ "$VARIANT" = "lite" ]; then
+              echo "تطبيق النسخة المخففة (Lite)..."
+              rm -rf "$SYS_DIR/priv-app/YouTube" "$SYS_DIR/app/Chrome" "$SYS_DIR/app/Gmail2" 2>/dev/null || true
+            elif [ "$VARIANT" = "ultra_lite" ]; then
+              echo "تطبيق النسخة المخففة جداً (Ultra Lite)..."
+              rm -rf "$SYS_DIR/priv-app/*Google*" "$SYS_DIR/app/*Google*" "$SYS_DIR/product/app/*" 2>/dev/null || true
+            else
+              echo "النسخة العادية (Standard) - بدون تعديلات حذف."
+            fi
+          else
+            echo "لم يتم العثور على مجلد system مباشرة، تخطي التخفيف."
+          fi
+
+      - name: Compress Output to 7z (Maximum Compression)
         run: |
           mkdir -p final_output
-          find workspace -type f \( -name "*.zip" -o -name "*.img" \) -exec cp {} final_output/ \;
-          ls -la final_output/
+          cd workspace
+          
+          # تحديد مجلد النواتج
+          if [ -d "output" ] && [ "$(ls -A output)" ]; then
+            TARGET="output/*"
+          else
+            TARGET="."
+          fi
+          
+          echo "جاري الضغط بصيغة 7z بأقصى درجة ضغط (-mx=9) للحصول على أصغر حجم ممكن..."
+          7z a -t7z -mx=9 -ms=on ../final_output/ROM-${{ github.event.inputs.device_name }}-${{ github.event.inputs.build_variant }}.7z $TARGET
+          
+          cd ../final_output
+          ls -lh
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ROM-Package-${{ github.event.inputs.device_name }}
+          name: ROM-${{ github.event.inputs.device_name }}-${{ github.event.inputs.build_variant }}
           path: final_output/*
           retention-days: 5
