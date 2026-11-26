@@ -8,7 +8,7 @@ on:
         required: false
         default: "https://pixeldrain.com/api/file/jTRvbxft?download"
       upload_pixeldrain:
-        description: "Upload converted image to Pixeldrain (requires PIXELDRAIN_API_KEY secret)"
+        description: "Upload compressed image to Pixeldrain (requires PIXELDRAIN_API_KEY secret)"
         type: boolean
         default: false
 
@@ -35,7 +35,8 @@ jobs:
             curl \
             jq \
             git \
-            file
+            file \
+            coreutils
 
       - name: Clone Samsung Galaxy A04 device, vendor, and kernel trees
         run: |
@@ -96,7 +97,7 @@ jobs:
 
           ls -la "$HOME/a04_trees/device" | head -n 20
 
-      - name: Apply Galaxy A04 config to ext4 image
+      - name: Apply Galaxy A04 config, compress, and split output
         env:
           A04_ENV_CONTENT: |
             #!/usr/bin/env bash
@@ -108,6 +109,8 @@ jobs:
         run: |
           set -e
           RAW_IMG="work/a04-working-raw.img"
+          SPARSE_IMG="work/galaxy-a04-arch-kde-sparse.img"
+          ZST_OUT="work/out/galaxy-a04-arch-kde-sparse.img.zst"
 
           if file "$RAW_IMG" | grep -qi "ext4 filesystem"; then
             sudo mount -o loop "$RAW_IMG" work/mnt
@@ -123,9 +126,24 @@ jobs:
             e2fsck -yf "$RAW_IMG" || true
           fi
 
-          img2simg "$RAW_IMG" work/out/galaxy-a04-arch-kde-sparse.img
+          img2simg "$RAW_IMG" "$SPARSE_IMG"
           rm -f "$RAW_IMG"
-          zstd -9 -T0 work/out/galaxy-a04-arch-kde-sparse.img -o work/out/galaxy-a04-arch-kde-sparse.img.zst
+
+          # ضغط صورة sparse وحذف الأصل المؤقت لتوفير المساحة
+          zstd -9 -T0 "$SPARSE_IMG" -o "$ZST_OUT"
+          rm -f "$SPARSE_IMG"
+
+          # تقسيم الملف المضغوط إلى أجزاء 1536M لتجاوز حد 2 GiB في GitHub Releases
+          split -b 1536M -d -a 2 "$ZST_OUT" "work/out/galaxy-a04-arch-kde-sparse.img.zst.part"
+
+          # إزالة الملف المجمّع إذا تجاوز 2000M لتجنب فشل رفعه كملف واحد، مع الإبقاء على الأجزاء
+          ZST_SIZE=$(stat -c%s "$ZST_OUT")
+          if [ "$ZST_SIZE" -ge 2000000000 ]; then
+            echo "Compressed file >= 2GB, keeping split parts only for GitHub Release"
+            rm -f "$ZST_OUT"
+          fi
+
+          sha256sum work/out/* > work/out/SHA256SUMS.txt
           ls -lh work/out/
 
       - name: Upload to Pixeldrain (Optional)
@@ -133,8 +151,9 @@ jobs:
         env:
           PIXELDRAIN_API_KEY: ${{ secrets.PIXELDRAIN_API_KEY }}
         run: |
+          TARGET_FILE=$(ls work/out/galaxy-a04-arch-kde-sparse.img.zst* | head -n 1)
           RESPONSE=$(curl -s -u ":${PIXELDRAIN_API_KEY}" \
-            -F "file=@work/out/galaxy-a04-arch-kde-sparse.img.zst" \
+            -F "file=@${TARGET_FILE}" \
             https://pixeldrain.com/api/file)
           echo "Pixeldrain Response: $RESPONSE"
           FILE_ID=$(echo "$RESPONSE" | jq -r '.id // empty')
@@ -148,7 +167,7 @@ jobs:
           tag_name: a04-arch-kde-${{ github.run_number }}
           name: Arch Linux ARM (KDE Plasma 6.8.2) for Galaxy A04 - Build #${{ github.run_number }}
           files: |
-            work/out/galaxy-a04-arch-kde-sparse.img.zst
-            work/out/galaxy-a04-arch-kde-sparse.img
+            work/out/galaxy-a04-arch-kde-sparse.img.zst*
+            work/out/SHA256SUMS.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
