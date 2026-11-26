@@ -81,7 +81,7 @@ jobs:
           rm -rf extracted source_archive
           ls -lh arch-aarch64.img
 
-      - name: Normalize image format and apply Galaxy A04 config
+      - name: Normalize image format
         run: |
           set -e
           SRC_IMG="work/arch-aarch64.img"
@@ -94,20 +94,25 @@ jobs:
           fi
           rm -f "$SRC_IMG"
 
-          # استعراض مراجع العتاد من الأشجار المستنسخة للتحقق من توفرها
           ls -la "$HOME/a04_trees/device" | head -n 20
+
+      - name: Apply Galaxy A04 config to ext4 image
+        env:
+          A04_ENV_CONTENT: |
+            #!/usr/bin/env bash
+            export QT_QPA_PLATFORM=wayland
+            export XDG_SESSION_TYPE=wayland
+            export KWIN_DRM_NO_AMS=1
+            export MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
+            export GALLIUM_DRIVER=llvmpipe
+        run: |
+          set -e
+          RAW_IMG="work/a04-working-raw.img"
 
           if file "$RAW_IMG" | grep -qi "ext4 filesystem"; then
             sudo mount -o loop "$RAW_IMG" work/mnt
             sudo mkdir -p work/mnt/etc/a04-port work/mnt/etc/profile.d
-            cat << 'EOF' | sudo tee work/mnt/etc/a04-port/a04-env.sh > /dev/null
-#!/usr/bin/env bash
-export QT_QPA_PLATFORM=wayland
-export XDG_SESSION_TYPE=wayland
-export KWIN_DRM_NO_AMS=1
-export MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
-export GALLIUM_DRIVER=llvmpipe
-EOF
+            printf '%s\n' "$A04_ENV_CONTENT" | sudo tee work/mnt/etc/a04-port/a04-env.sh > /dev/null
             sudo chmod +x work/mnt/etc/a04-port/a04-env.sh
             sudo ln -sf /etc/a04-port/a04-env.sh work/mnt/etc/profile.d/a04-env.sh
             sudo sync
