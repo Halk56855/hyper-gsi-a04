@@ -1,0 +1,149 @@
+name: Convert Arch Linux ARM Image for Galaxy A04
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_url:
+        description: "Direct download link to XGSI_ARCHLINUX_KDE.zip or raw image"
+        required: false
+        default: "https://pixeldrain.com/api/file/jTRvbxft?download"
+      upload_pixeldrain:
+        description: "Upload converted image to Pixeldrain (requires PIXELDRAIN_API_KEY secret)"
+        type: boolean
+        default: false
+
+jobs:
+  convert-for-a04:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install required tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            android-sdk-libsparse-utils \
+            e2fsprogs \
+            p7zip-full \
+            unzip \
+            zstd \
+            pigz \
+            curl \
+            jq \
+            git \
+            file
+
+      - name: Clone Samsung Galaxy A04 device, vendor, and kernel trees
+        run: |
+          set -e
+          mkdir -p "$HOME/a04_trees"
+          git clone --depth=1 https://github.com/A04-Trees-and-ROMs/android_device_samsung_a04.git "$HOME/a04_trees/device"
+          git clone --depth=1 https://github.com/A04-Trees-and-ROMs/android_vendor_samsung_a04.git "$HOME/a04_trees/vendor"
+          git clone --depth=1 https://github.com/A04-Trees-and-ROMs/android_kernel_samsung_a04.git "$HOME/a04_trees/kernel"
+          du -sh "$HOME/a04_trees/device" "$HOME/a04_trees/vendor" "$HOME/a04_trees/kernel"
+
+      - name: Prepare workspace
+        run: |
+          mkdir -p work/mnt work/out work/extracted
+
+      - name: Download and extract source image
+        env:
+          IMAGE_URL: ${{ inputs.image_url }}
+        run: |
+          set -e
+          cd work
+          if [ -n "$IMAGE_URL" ]; then
+            curl -L --fail "$IMAGE_URL" -o source_archive
+            file source_archive
+            if unzip -tq source_archive >/dev/null 2>&1; then
+              unzip -o source_archive -d extracted
+            elif 7z t source_archive >/dev/null 2>&1; then
+              7z x source_archive -oextracted
+            else
+              cp source_archive extracted/arch-aarch64.img
+            fi
+            IMG_FOUND=$(find extracted -type f \( -name "*.img" -o -name "*.raw" \) | head -n 1)
+            if [ -z "$IMG_FOUND" ]; then
+              echo "No .img or .raw file found inside archive"
+              exit 1
+            fi
+            mv "$IMG_FOUND" arch-aarch64.img
+          elif [ -f "../arch-aarch64.img" ]; then
+            cp "../arch-aarch64.img" arch-aarch64.img
+          else
+            echo "No image URL or local arch-aarch64.img found"
+            exit 1
+          fi
+          rm -rf extracted source_archive
+          ls -lh arch-aarch64.img
+
+      - name: Normalize image format and apply Galaxy A04 config
+        run: |
+          set -e
+          SRC_IMG="work/arch-aarch64.img"
+          RAW_IMG="work/a04-working-raw.img"
+
+          if file "$SRC_IMG" | grep -qi "Android sparse image"; then
+            simg2img "$SRC_IMG" "$RAW_IMG"
+          else
+            cp "$SRC_IMG" "$RAW_IMG"
+          fi
+          rm -f "$SRC_IMG"
+
+          # استعراض مراجع العتاد من الأشجار المستنسخة للتحقق من توفرها
+          ls -la "$HOME/a04_trees/device" | head -n 20
+
+          if file "$RAW_IMG" | grep -qi "ext4 filesystem"; then
+            sudo mount -o loop "$RAW_IMG" work/mnt
+            sudo mkdir -p work/mnt/etc/a04-port work/mnt/etc/profile.d
+            cat << 'EOF' | sudo tee work/mnt/etc/a04-port/a04-env.sh > /dev/null
+#!/usr/bin/env bash
+export QT_QPA_PLATFORM=wayland
+export XDG_SESSION_TYPE=wayland
+export KWIN_DRM_NO_AMS=1
+export MESA_LOADER_DRIVER_OVERRIDE=llvmpipe
+export GALLIUM_DRIVER=llvmpipe
+EOF
+            sudo chmod +x work/mnt/etc/a04-port/a04-env.sh
+            sudo ln -sf /etc/a04-port/a04-env.sh work/mnt/etc/profile.d/a04-env.sh
+            sudo sync
+            sudo umount work/mnt
+
+            e2fsck -yf "$RAW_IMG" || true
+            resize2fs -M "$RAW_IMG" || true
+            e2fsck -yf "$RAW_IMG" || true
+          fi
+
+          img2simg "$RAW_IMG" work/out/galaxy-a04-arch-kde-sparse.img
+          rm -f "$RAW_IMG"
+          zstd -9 -T0 work/out/galaxy-a04-arch-kde-sparse.img -o work/out/galaxy-a04-arch-kde-sparse.img.zst
+          ls -lh work/out/
+
+      - name: Upload to Pixeldrain (Optional)
+        if: ${{ inputs.upload_pixeldrain && env.PIXELDRAIN_API_KEY != '' }}
+        env:
+          PIXELDRAIN_API_KEY: ${{ secrets.PIXELDRAIN_API_KEY }}
+        run: |
+          RESPONSE=$(curl -s -u ":${PIXELDRAIN_API_KEY}" \
+            -F "file=@work/out/galaxy-a04-arch-kde-sparse.img.zst" \
+            https://pixeldrain.com/api/file)
+          echo "Pixeldrain Response: $RESPONSE"
+          FILE_ID=$(echo "$RESPONSE" | jq -r '.id // empty')
+          if [ -n "$FILE_ID" ]; then
+            echo "Pixeldrain URL: https://pixeldrain.com/u/${FILE_ID}"
+          fi
+
+      - name: Upload GitHub Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: a04-arch-kde-${{ github.run_number }}
+          name: Arch Linux ARM (KDE Plasma 6.8.2) for Galaxy A04 - Build #${{ github.run_number }}
+          files: |
+            work/out/galaxy-a04-arch-kde-sparse.img.zst
+            work/out/galaxy-a04-arch-kde-sparse.img
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
